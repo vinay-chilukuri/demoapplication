@@ -1,0 +1,1206 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: application-config
+  namespace: default
+#common configuration shared between all applications
+data:
+  application.yml: |-
+    configserver:
+      name:  JHipster Registry
+      status: Connected to the JHipster Registry running in Kubernetes
+    eureka:
+      client:
+        initial-instance-info-replication-interval-seconds: 15
+        instance-info-replication-interval-seconds: 15
+        registry-fetch-interval-seconds: 15
+        fetch-registry: true
+        register-with-eureka: true
+        eureka-service-url-poll-interval-seconds: 15
+      instance:
+        lease-renewal-interval-in-seconds: 10
+        registry-default-open-for-traffic-count: 0
+    jhipster:
+      security:
+        authentication:
+          jwt:
+            base64-secret: NjhkMmZkMDZhMjA3OTkwMDVmNjhjNDQzNmUzMjYxMzU2ZjkyNjcxMmQxMmU3MzAzNzVhZjIzOTkwOTkzYWIyMWM2NWM1OGYyODMzOTA3ZjE2NjU4MmJhZWJlNDYwNjViZTUzMDUwMDY4ODk0YTk4Y2RjNmFiN2U0OTgyOThkOWE=
+  # app specific configuration
+  jhipster-registry.yml: |-
+    eureka:
+      client:
+        service-url:
+          defaultZone: http://admin:${spring.security.user.password}@jhipster-registry-0.jhipster-registry.default.svc.cluster.local:8761/eureka/,http://admin:${spring.security.user.password}@jhipster-registry-1.jhipster-registry.default.svc.cluster.local:8761/eureka/
+---
+# JHipster Registry HA cluster
+#
+# Note that as this is based on a StatefulSet, it will only work on Kubernetes >= 1.5
+#
+# By default, the JHipster Registry and its UI is not accessible from outside the cluster for security reasons
+# You can setup temporary access to it on localhost:8761 by running :
+#   kubectl port-forward jhipster-registry-0 8761
+#
+# To scale your JHipster Registry cluster :
+#   In this file, change the value of spec.replicas and CLUSTER_SIZE to any value
+#   Apply the descriptor again : `kubectl apply -f jhipster-registry.yml`
+#   This will create new replicas with the correct CLUSTER_SIZE which is mandatory so that all Eureka server can connect directly to all the others.
+#   Then delete the previous replica pods one by one so that they can be recreated with the correct CLUSTER_SIZE configuration.
+#   `kubectl delete pod jhipster-registry-0`, `kubectl delete pod jhipster-registry-1`
+apiVersion: v1
+kind: Secret
+metadata:
+  name: registry-secret
+  namespace: default
+type: Opaque
+data:
+  registry-admin-password: YWRtaW4= # base64 encoded "admin"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jhipster-registry
+  namespace: default
+  labels:
+    app: jhipster-registry
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: 'true'
+spec:
+  ports:
+    - port: 8761
+      name: http
+  clusterIP: None
+  selector:
+    app: jhipster-registry
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jhipster-registry
+  namespace: default
+spec:
+  serviceName: jhipster-registry
+  replicas: 2
+  selector:
+    matchLabels:
+      app: jhipster-registry
+      version: '1.0'
+  template:
+    metadata:
+      labels:
+        app: jhipster-registry
+        version: '1.0'
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: jhipster-registry
+          image: jhipster/jhipster-registry:v5.0.2
+          ports:
+            - containerPort: 8761
+          env:
+            # StatefulSet specific configuration
+            # Registry configuration
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod,k8s
+            - name: SPRING_SECURITY_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: registry-secret
+                  key: registry-admin-password
+            - name: JHIPSTER_SECURITY_AUTHENTICATION_JWT_BASE64_SECRET
+              value: YlhrdGMyVmpjbVYwTFhSdmEyVnVMWFJ2TFdOb1lXNW5aUzFwYmkxd2NtOWtkV04wYVc5dUxXRnVaQzEwYnkxclpXVndMV2x1TFdFdGMyVmpkWEpsTFhCc1lXTmwK
+            - name: SPRING_CLOUD_CONFIG_SERVER_COMPOSITE_0_TYPE
+              value: native
+            - name: SPRING_CLOUD_CONFIG_SERVER_COMPOSITE_0_SEARCH_LOCATIONS
+              value: file:./central-config
+            - name: EUREKA_INSTANCE_LEASE_RENEWAL_INTERVAL_IN_SECONDS
+              value: '15'
+            - name: EUREKA_INSTANCE_LEASE_EXPIRATION_DURATION_IN_SECONDS
+              value: '30'
+            - name: EUREKA_SERVER_PEER_EUREKA_NODES_UPDATE_INTERVAL_MS
+              value: '15000'
+            - name: EUREKA_SERVER_RENAWAL_THRESHOLD_UPDATE_INTERVAL_MS
+              value: '15000'
+            - name: EUREKA_SERVER_REGISTRY_SYNC_RETRIES
+              value: '3'
+            - name: EUREKA_SERVER_ENABLE_SELF_PRESERVATION
+              value: 'false'
+            - name: EUREKA_SERVER_PEER_NODE_CONNECT_TIMEOUT_MS
+              value: '2000'
+            - name: EUREKA_CLIENT_FETCH_REGISTRY
+              value: 'true'
+            - name: EUREKA_CLIENT_REGISTER_WITH_EUREKA
+              value: 'true'
+            - name: K8S_CONFIG_PATH
+              value: '/central-config/'
+          volumeMounts:
+            - name: config-volume
+              mountPath: /central-config
+      volumes:
+        - name: config-volume
+          configMap:
+            name: application-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demoapplication
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demoapplication
+      version: 'v1'
+  template:
+    metadata:
+      labels:
+        app: demoapplication
+        version: 'v1'
+    spec:
+      initContainers:
+        - name: init-ds
+          image: busybox:latest
+          command:
+            - '/bin/sh'
+            - '-c'
+            - |
+              while true
+              do
+                rt=$(nc -z -w 1 demoapplication-mongodb 27017)
+                if [ $? -eq 0 ]; then
+                  echo "DB is UP"
+                  break
+                fi
+                echo "DB is not yet reachable;sleep for 10s before retry"
+                sleep 10
+              done
+      containers:
+        - name: demoapplication-app
+          image: vinchilu/demoapplication
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: prod
+            - name: SPRING_CLOUD_CONFIG_URI
+              value: http://admin:${jhipster.registry.password}@jhipster-registry.default.svc.cluster.local:8761/config
+            - name: JHIPSTER_REGISTRY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: registry-secret
+                  key: registry-admin-password
+            - name: EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE
+              value: http://admin:${jhipster.registry.password}@jhipster-registry.default.svc.cluster.local:8761/eureka/
+            - name: SPRING_DATA_MONGODB_DATABASE
+              value: demoapplication
+            - name: SPRING_DATA_MONGODB_URI
+              value: 'mongodb://demoapplication-mongodb-0.demoapplication-mongodb.default:27017,demoapplication-mongodb-1.demoapplication-mongodb.default:27017,demoapplication-mongodb-2.demoapplication-mongodb.default:27017'
+            - name: JHIPSTER_METRICS_LOGS_ENABLED
+              value: 'true'
+            - name: JHIPSTER_LOGGING_LOGSTASH_ENABLED
+              value: 'true'
+            - name: JHIPSTER_LOGGING_LOGSTASH_HOST
+              value: jhipster-logstash
+            - name: JAVA_OPTS
+              value: ' -Xmx256m -Xms256m'
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '500m'
+            limits:
+              memory: '1Gi'
+              cpu: '1'
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /management/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /management/info
+              port: http
+            initialDelaySeconds: 120
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: demoapplication
+  namespace: default
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /*
+            backend:
+              serviceName: demoapplication
+              servicePort: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: default
+  name: demoapplication-mongodb-config
+data:
+  mongod.conf: |
+    net:
+      port: 27017
+    replication:
+      replSetName: rs0
+    storage:
+      dbPath: /data/db
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: default
+  name: demoapplication-mongodb-init
+data:
+  on-start.sh: |
+    script_name=${0##*/}
+
+    log() {
+        local msg="$1"
+        local timestamp
+        timestamp=$(date --iso-8601=ns)
+        echo "[$timestamp] [$script_name] $msg" >> /work-dir/log.txt
+    }
+
+    shutdown_mongo() {
+        if [[ $# -eq 1 ]]; then
+            args="timeoutSecs: $1"
+        else
+            args='force: true'
+        fi
+        log "Shutting down MongoDB ($args)..."
+        mongo admin "${admin_creds[@]}" "${ssl_args[@]}" --eval "db.shutdownServer({$args})"
+    }
+
+    my_hostname=$(hostname)
+    log "Bootstrapping MongoDB replica set member: $my_hostname"
+
+    log "Reading standard input..."
+    while read -ra line; do
+        if [[ "${line}" == *"${my_hostname}"* ]]; then
+            service_name="$line"
+            continue
+        fi
+        peers=("${peers[@]}" "$line")
+    done
+
+    # Generate the ca cert
+    ca_crt=/data/configdb/tls.crt
+    if [ -f "$ca_crt"  ]; then
+        log "Generating certificate"
+        ca_key=/data/configdb/tls.key
+        pem=/work-dir/mongo.pem
+        ssl_args=(--ssl --sslCAFile "$ca_crt" --sslPEMKeyFile "$pem")
+
+    # Move into /work-dir
+    pushd /work-dir
+
+    cat >openssl.cnf <<EOL
+    [req]
+    req_extensions = v3_req
+    distinguished_name = req_distinguished_name
+    [req_distinguished_name]
+    [ v3_req ]
+    basicConstraints = CA:FALSE
+    keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+    subjectAltName = @alt_names
+    [alt_names]
+    DNS.1 = $(echo -n "$my_hostname" | sed s/-[0-9]*$//)
+    DNS.2 = $my_hostname
+    DNS.3 = $service_name
+    DNS.4 = localhost
+    DNS.5 = 127.0.0.1
+    EOL
+
+        # Generate the certs
+        openssl genrsa -out mongo.key 2048
+        openssl req -new -key mongo.key -out mongo.csr -subj "/CN=$my_hostname" -config openssl.cnf
+        openssl x509 -req -in mongo.csr \
+            -CA "$ca_crt" -CAkey "$ca_key" -CAcreateserial \
+            -out mongo.crt -days 3650 -extensions v3_req -extfile openssl.cnf
+
+        rm mongo.csr
+        cat mongo.crt mongo.key > $pem
+        rm mongo.key mongo.crt
+    fi
+
+
+    log "Peers: ${peers[*]}"
+
+    log "Starting a MongoDB instance..."
+    mongod --config /data/configdb/mongod.conf --dbpath="$DATA_PATH" --replSet="$REPLICA_SET" --port=$PORT "${auth_args[@]}" --bind_ip=0.0.0.0 >> /work-dir/log.txt 2>&1 &
+
+    log "Waiting for MongoDB to be ready..."
+    until mongo "${ssl_args[@]}" --eval "db.adminCommand('ping')"; do
+        log "Retrying..."
+        sleep 2
+    done
+
+    log "Initialized."
+
+    # try to find a master and add yourself to its replica set.
+    for peer in "${peers[@]}"; do
+        if mongo admin --host "$peer" "${admin_creds[@]}" "${ssl_args[@]}" --eval "rs.isMaster()" | grep '"ismaster" : true'; then
+            log "Found master: $peer"
+            log "Adding myself ($service_name) to replica set..."
+            if mongo admin --host "$peer" "${admin_creds[@]}" "${ssl_args[@]}" --eval "rs.add('$service_name')" | grep 'Quorum check failed'; then
+                log 'Quorum check failed, unable to join replicaset. Exiting prematurely.'
+                shutdown_mongo
+                exit 1
+            fi
+
+            sleep 3
+
+            log 'Waiting for replica to reach SECONDARY state...'
+            until printf '.' && [[ $(mongo admin "${admin_creds[@]}" "${ssl_args[@]}" --quiet --eval "rs.status().myState") == '2' ]]; do
+                sleep 1
+            done
+
+            log '✓ Replica reached SECONDARY state.'
+
+            shutdown_mongo "60"
+            log "Good bye."
+            exit 0
+        fi
+    done
+
+    # else initiate a replica set with yourself.
+    if mongo "${ssl_args[@]}" --eval "rs.status()" | grep "no replset config has been received"; then
+        log "Initiating a new replica set with myself ($service_name)..."
+        mongo "${ssl_args[@]}" --eval "rs.initiate({'_id': '$REPLICA_SET', 'members': [{'_id': 0, 'host': '$service_name'}]})"
+
+        sleep 3
+
+        log 'Waiting for replica to reach PRIMARY state...'
+        until printf '.' && [[ $(mongo "${ssl_args[@]}" --quiet --eval "rs.status().myState") == '1' ]]; do
+            sleep 1
+        done
+
+        log '✓ Replica reached PRIMARY state.'
+
+        log "Done."
+    fi
+
+    shutdown_mongo
+    log "Good bye."
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: demoapplication-mongodb
+  namespace: default
+spec:
+  serviceName: demoapplication-mongodb
+  replicas: 3
+  selector:
+    matchLabels:
+      app: demoapplication-mongodb
+  template:
+    metadata:
+      labels:
+        app: demoapplication-mongodb
+    spec:
+      initContainers:
+        - name: config
+          image: busybox
+          command:
+            - 'sh'
+          args:
+            - '-c'
+            - |
+              set -e
+              set -x
+              cp /configdb-readonly/mongod.conf /data/configdb/mongod.conf
+          volumeMounts:
+            - name: workdir
+              mountPath: /work-dir
+            - name: config
+              mountPath: /configdb-readonly
+            - name: configdir
+              mountPath: /data/configdb
+        - name: install
+          image: 'k8s.gcr.io/mongodb-install:0.6'
+          args:
+            - --work-dir=/work-dir
+          imagePullPolicy: 'IfNotPresent'
+          volumeMounts:
+            - name: workdir
+              mountPath: /work-dir
+        - name: boot
+          image: mongo:4.0.12
+          command:
+            - /work-dir/peer-finder
+          args:
+            - -on-start=/init/on-start.sh
+            - '-service=demoapplication-mongodb'
+          imagePullPolicy: 'IfNotPresent'
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: REPLICA_SET
+              value: rs0
+            - name: DATA_PATH
+              value: /data/db
+            - name: PORT
+              value: '27017'
+          volumeMounts:
+            - name: workdir
+              mountPath: /work-dir
+            - name: init
+              mountPath: /init
+            - name: configdir
+              mountPath: /data/configdb
+            - name: datadir
+              mountPath: /data/db
+      containers:
+        - name: mongodb
+          image: mongo:4.0.12
+          imagePullPolicy: 'IfNotPresent'
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: REPLICA_SET
+              value: rs0
+            - name: DATA_PATH
+              value: /data/db
+            - name: PORT
+              value: '27017'
+          ports:
+            - name: peer
+              containerPort: 27017
+          command:
+            - mongod
+          args:
+            - --config=/data/configdb/mongod.conf
+            - --dbpath=$(DATA_PATH)
+            - --replSet=$(REPLICA_SET)
+            - --port=$(PORT)
+            - --bind_ip=0.0.0.0
+          livenessProbe:
+            exec:
+              command:
+                - mongo
+                - --eval
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+            periodSeconds: 10
+            successThreshold: 1
+          readinessProbe:
+            exec:
+              command:
+                - mongo
+                - --eval
+                - "db.adminCommand('ping')"
+            initialDelaySeconds: 5
+            timeoutSeconds: 1
+            failureThreshold: 3
+            periodSeconds: 10
+            successThreshold: 1
+          volumeMounts:
+            - name: datadir
+              mountPath: /data/db
+            - name: configdir
+              mountPath: /data/configdb
+            - name: workdir
+              mountPath: /work-dir
+      volumes:
+        - name: config
+          configMap:
+            name: demoapplication-mongodb-config
+        - name: workdir
+          emptyDir: {}
+        - name: init
+          configMap:
+            defaultMode: 0755
+            name: demoapplication-mongodb-init
+        - name: configdir
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: datadir
+      spec:
+        accessModes: ['ReadWriteOnce']
+        resources:
+          requests:
+            storage: '1Gi'
+---
+# Headless service for DNS record
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: 'true'
+  name: demoapplication-mongodb
+  namespace: default
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: peer
+      port: 27017
+  selector:
+    app: demoapplication-mongodb
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demoapplication
+  namespace: default
+  labels:
+    app: demoapplication
+spec:
+  selector:
+    app: demoapplication
+  type: NodePort
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jhipster-console
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jhipster-console
+  template:
+    metadata:
+      labels:
+        app: jhipster-console
+    spec:
+      containers:
+        - image: jhipster/jhipster-console:v4.1.0
+          name: jhipster-console
+          ports:
+            - containerPort: 5601
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jhipster-console
+  namespace: default
+  labels:
+    app: jhipster-console
+spec:
+  ports:
+    - name: http
+      port: 5601
+      targetPort: 5601
+  type: ClusterIP
+  selector:
+    app: jhipster-console
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: jhipster-console
+  namespace: default
+spec:
+  rules:
+    - host: jhipster-console.default.
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: jhipster-console
+              servicePort: 5601
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jhipster-import-dashboards
+  namespace: default
+  labels:
+    job: jhipster-import-dashboards
+spec:
+  template:
+    metadata:
+      labels:
+        job: jhipster-import-dashboards
+      annotations:
+        'helm.sh/hook': post-install
+    spec:
+      initContainers:
+        - name: init-dependent-service-check
+          image: busybox:latest
+          command:
+            - '/bin/sh'
+            - '-c'
+            - |
+              until nc -z -w 1 jhipster-elasticsearch 9200
+              do
+                echo Waiting for elasticsearch cluster to get initialized
+                sleep 5
+              done
+              until nc -z -w 1 jhipster-console 5601
+              do
+                echo Waiting for kibana to get initialized
+                sleep 5
+              done
+      containers:
+        - name: jhipster-import-dashboards
+          image: jhipster/jhipster-import-dashboards:v4.1.0
+          imagePullPolicy: IfNotPresent
+      restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: es-config
+  namespace: default
+data:
+  discovery.type: zen
+  minimum.master.nodes: '1'
+  unicast.host: jhipster-elasticsearch-discovery
+  network.host: 0.0.0.0
+  http.enabled: 'true'
+  memory.opts: -Djava.net.preferIPv4Stack=true -Xms512m -Xmx512m
+  cluster.name: jhipster-elasticsearch-cluster
+  memory.lock: 'false'
+  path.data: /es/data
+  path.logs: /es/logs
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jhipster-elasticsearch-master
+  namespace: default
+  labels:
+    component: jhipster-elasticsearch
+    role: master
+spec:
+  serviceName: jhipster-elasticsearch-master
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        component: jhipster-elasticsearch
+        role: master
+    spec:
+      initContainers:
+        - name: init-sysctl
+          image: busybox
+          # This would be needed to give access to 'elasticsearch' user that comes from the base
+          # image where the provisioned volume is host path (in minikube)
+          command:
+            - '/bin/sh'
+            - '-c'
+            - 'chown -R 1000:1000 /es'
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+        - name: init-sysctl-2
+          image: busybox
+          # This would be needed to give access to 'elasticsearch' user that comes from the base
+          # image where the provisioned volume is host path (in minikube)
+          command: ['sysctl', '-w', 'vm.max_map_count=262144']
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+      containers:
+        - name: jhipster-elasticsearch-master
+          image: jhipster/jhipster-elasticsearch:v4.1.0
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: cluster.name
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: cluster.name
+            - name: discovery.type
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: discovery.type
+            - name: node.master
+              value: 'true'
+            - name: discovery.zen.minimum_master_nodes
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: minimum.master.nodes
+            - name: discovery.zen.ping.unicast.hosts
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: unicast.host
+            - name: node.ingest
+              value: 'true'
+            - name: node.data
+              value: 'false'
+            - name: network.host
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: network.host
+            - name: transport.host
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: network.host
+            - name: http.enabled
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: http.enabled
+            - name: bootstrap.memory_lock
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: memory.lock
+            - name: ES_JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: memory.opts
+            - name: path.data
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: path.data
+            - name: path.logs
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: path.logs
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '200m'
+            limits:
+              memory: '1024Mi'
+              cpu: '400m'
+          ports:
+            - containerPort: 9300
+              name: transport
+              protocol: TCP
+            - containerPort: 9200
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+            - name: config
+              mountPath: /es/config/
+      volumes:
+        - name: config
+          configMap:
+            name: es-config
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ['ReadWriteOnce']
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jhipster-elasticsearch-data
+  namespace: default
+  labels:
+    component: jhipster-elasticsearch
+    role: data
+spec:
+  serviceName: jhipster-elasticsearch-data
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        component: jhipster-elasticsearch
+        role: data
+    spec:
+      initContainers:
+        - name: init-sysctl
+          image: busybox
+          command:
+            - '/bin/sh'
+            - '-c'
+            - 'chown -R 1000:1000 /es'
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+        - name: init-sysctl-2
+          image: busybox
+          command: ['sysctl', '-w', 'vm.max_map_count=262144']
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+      containers:
+        - name: jhipster-elasticsearch-data
+          image: jhipster/jhipster-elasticsearch:v4.1.0
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: cluster.name
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: cluster.name
+            - name: discovery.type
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: discovery.type
+            - name: node.master
+              value: 'false'
+            - name: discovery.zen.minimum_master_nodes
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: minimum.master.nodes
+            - name: discovery.zen.ping.unicast.hosts
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: unicast.host
+            - name: node.ingest
+              value: 'true'
+            - name: node.data
+              value: 'true'
+            - name: network.host
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: network.host
+            - name: transport.host
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: network.host
+            - name: http.enabled
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: http.enabled
+            - name: bootstrap.memory_lock
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: memory.lock
+            - name: ES_JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: memory.opts
+            - name: path.data
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: path.data
+            - name: path.logs
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: path.logs
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '200m'
+            limits:
+              memory: '1024Mi'
+              cpu: '400m'
+          ports:
+            - containerPort: 9300
+              name: transport
+              protocol: TCP
+            - containerPort: 9200
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+            - name: config
+              mountPath: /es/config/
+      volumes:
+        - name: config
+          configMap:
+            name: es-config
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ['ReadWriteOnce']
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jhipster-elasticsearch-client
+  namespace: default
+  labels:
+    component: jhipster-elasticsearch
+    role: client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: jhipster-elasticsearch
+      role: client
+  template:
+    metadata:
+      labels:
+        component: jhipster-elasticsearch
+        role: client
+    spec:
+      initContainers:
+        - name: init-sysctl
+          image: busybox
+          command:
+            - sysctl
+            - -w
+            - vm.max_map_count=262144
+          securityContext:
+            privileged: true
+      containers:
+        - name: jhipster-elasticsearch-client
+          image: jhipster/jhipster-elasticsearch:v4.1.0
+          env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: node.name
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: cluster.name
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: cluster.name
+            - name: discovery.type
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: discovery.type
+            - name: node.master
+              value: 'false'
+            - name: discovery.zen.minimum_master_nodes
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: minimum.master.nodes
+            - name: discovery.zen.ping.unicast.hosts
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: unicast.host
+            - name: node.ingest
+              value: 'true'
+            - name: node.data
+              value: 'false'
+            - name: network.host
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: network.host
+            - name: transport.host
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: network.host
+            - name: http.enabled
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: http.enabled
+            - name: bootstrap.memory_lock
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: memory.lock
+            - name: ES_JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: memory.opts
+            - name: path.data
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: path.data
+            - name: path.logs
+              valueFrom:
+                configMapKeyRef:
+                  name: es-config
+                  key: path.logs
+          resources:
+            requests:
+              memory: '512Mi'
+              cpu: '200m'
+            limits:
+              memory: '1024Mi'
+              cpu: '400m'
+          ports:
+            - containerPort: 9300
+              name: transport
+              protocol: TCP
+            - containerPort: 9200
+              name: http
+              protocol: TCP
+          volumeMounts:
+            - name: storage
+              mountPath: /es
+            - name: config
+              mountPath: /es/config
+      volumes:
+        - name: config
+          configMap:
+            name: es-config
+        - name: storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jhipster-elasticsearch-discovery
+  namespace: default
+  labels:
+    component: jhipster-elasticsearch
+    role: master
+spec:
+  ports:
+    - name: transport
+      port: 9300
+      targetPort: 9300
+      protocol: TCP
+  selector:
+    component: jhipster-elasticsearch
+    role: master
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jhipster-elasticsearch-data
+  namespace: default
+  labels:
+    component: jhipster-elasticsearch
+    role: data
+spec:
+  ports:
+    - name: transport
+      port: 9300
+      targetPort: 9300
+      protocol: TCP
+  selector:
+    component: jhipster-elasticsearch
+    role: data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jhipster-elasticsearch
+  namespace: default
+  labels:
+    component: jhipster-elasticsearch
+    role: client
+spec:
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+  selector:
+    component: jhipster-elasticsearch
+    role: client
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jhipster-logstash
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jhipster-logstash
+  template:
+    metadata:
+      labels:
+        app: jhipster-logstash
+    spec:
+      initContainers:
+        - name: init-es-check
+          image: busybox
+          command:
+            - '/bin/sh'
+            - '-c'
+            - |
+              until nc -z -w 1 jhipster-elasticsearch 9200
+              do
+                echo Waiting for elasticsearch cluster to get initialized
+                sleep 5
+              done
+      containers:
+        - image: jhipster/jhipster-logstash:v4.1.0
+          name: jhipster-logstash
+          ports:
+            - containerPort: 5000
+              protocol: UDP
+            - containerPort: 5000
+              protocol: TCP
+          resources: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jhipster-logstash
+  namespace: default
+  labels:
+    app: jhipster-logstash
+spec:
+  ports:
+    - name: 'udp'
+      port: 5000
+      protocol: UDP
+      targetPort: 5000
+    - name: 'tcp'
+      port: 5000
+      protocol: TCP
+      targetPort: 5000
+  selector:
+    app: jhipster-logstash
