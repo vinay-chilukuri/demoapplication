@@ -1,0 +1,54 @@
+{
+  "generator-jhipster": {
+    "promptValues": {
+      "packageName": "com.mycompany.myapp"
+    },
+    "jhipsterVersion": "6.4.1",
+    "applicationType": "monolith",
+    "baseName": "demoapplication",
+    "packageName": "com.mycompany.myapp",
+    "packageFolder": "com/mycompany/myapp",
+    "serverPort": "8080",
+    "authenticationType": "jwt",
+    "cacheProvider": "no",
+    "enableHibernateCache": false,
+    "websocket": false,
+    "databaseType": "mongodb",
+    "devDatabaseType": "mongodb",
+    "prodDatabaseType": "mongodb",
+    "searchEngine": false,
+    "messageBroker": false,
+    "serviceDiscoveryType": "eureka",
+    "buildTool": "maven",
+    "enableSwaggerCodegen": false,
+    "jwtSecretKey": "NjhkMmZkMDZhMjA3OTkwMDVmNjhjNDQzNmUzMjYxMzU2ZjkyNjcxMmQxMmU3MzAzNzVhZjIzOTkwOTkzYWIyMWM2NWM1OGYyODMzOTA3ZjE2NjU4MmJhZWJlNDYwNjViZTUzMDUwMDY4ODk0YTk4Y2RjNmFiN2U0OTgyOThkOWE=",
+    "embeddableLaunchScript": false,
+    "useSass": true,
+    "clientPackageManager": "npm",
+    "clientFramework": "react",
+    "clientTheme": "none",
+    "clientThemeVariant": "",
+    "testFrameworks": [],
+    "jhiPrefix": "jhi",
+    "entitySuffix": "",
+    "dtoSuffix": "DTO",
+    "otherModules": [],
+    "enableTranslation": false,
+    "blueprints": [],
+    "appsFolders": [
+      "demo-project"
+    ],
+    "directoryPath": "../",
+    "clusteredDbApps": [
+      "demo-project"
+    ],
+    "dockerRepositoryName": "vinchilu",
+    "dockerPushCommand": "docker push",
+    "kubernetesNamespace": "default",
+    "kubernetesServiceType": "Ingress",
+    "ingressType": "gke",
+    "ingressDomain": "",
+    "monitoring": "elk",
+    "istio": false
+  }
+}

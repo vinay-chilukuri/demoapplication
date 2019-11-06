@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: demoapplication
+  namespace: default
+  labels:
+    app: demoapplication
+spec:
+  selector:
+    app: demoapplication
+  type: NodePort
+  ports:
+    - name: http
+      port: 8080
